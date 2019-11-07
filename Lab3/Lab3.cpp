@@ -1,110 +1,72 @@
 ﻿#include "pch.h"
-#include <windows.h>
-#include <thread>
-#include <iostream>
-#pragma comment(lib, "user32.lib")
 
-#define VK_q 113
-#define VK_a 97
-#define VK_w 119
-#define VK_s 115
+#include <iostream>
+#include <thread>
+
+#include <Windows.h>
 
 using namespace std;
 
-CRITICAL_SECTION cs;
+const int writeDelay = 310,
+	readDelay = 400;
 
-const auto data_size = 10;
-int arr[data_size];
-int data_length = 0;
+int buf = 0;
 
-int writeDelay = 300,
-	readDelay = 300;
+HANDLE hSemWrite,
+	hSemRead,
+	hMutex;
 
-void view()
+void consumer()
 {
-	system("cls");
+	cout << "[CONSUMER] thread started" << endl;
 
-	printf("Timeouts:\nWrite: %d\nRead: %d\n\n", writeDelay, readDelay);
-
-	printf("Items (%d):\n", data_length);
-
-	if (data_length) {
-		for (int i = 0; i < data_length; i++) {
-			printf("%d ", arr[i]);
-		}
-	}
-	printf("\n\n");
-
-	if (GetKeyState(VK_LSHIFT) < 0) {
-		writeDelay += 100;
-	}
-	if (GetKeyState(VK_LCONTROL) < 0) {
-		if (writeDelay > 100) {
-			writeDelay -= 100;
-		}
-	}
-	if (GetKeyState(VK_RSHIFT) < 0) {
-		readDelay += 100;
-	}
-	if (GetKeyState(VK_RCONTROL) < 0) {
-		if (readDelay > 100) {
-			readDelay -= 100;
-		}
-	}
-}
-
-void thread_write()
-{
-	do {
-		Sleep(writeDelay);
-		EnterCriticalSection(&cs);
-		if (data_length < data_size) {
-			int d = rand() % 90 + 10;
-			arr[data_length++] = d;
-
-			view();
-			cout << "Write: " << d << endl;
-		}
-		else {
-			cout << "Buffer full (no write)" << endl;
-		}
-		LeaveCriticalSection(&cs);
-	} while (1);
-}
-
-void thread_read()
-{
-	do {
+	while (1)
+	{
 		Sleep(readDelay);
-		EnterCriticalSection(&cs);
-		if (data_length > 0) {
-			int d = arr[0];
 
-			data_length--;
-			for (int i = 0; i < data_length; i++) {
-				arr[i] = arr[i + 1];
-			}
+		WaitForSingleObject(hSemRead, INFINITE);
+		WaitForSingleObject(hMutex, INFINITE);
 
-			view();
+		buf -= 1;
+		cout << "[CONSUMER] buf = " << buf << endl;
 
-			cout << "Read: " << d << endl;
-		}
-		else {
-			cout << "No read (empty)" << endl;
-		}
-		LeaveCriticalSection(&cs);
-	} while (1);
+		ReleaseSemaphore(hSemWrite, 1, NULL);
+		ReleaseSemaphore(hSemRead, -1, NULL);
+		ReleaseMutex(hMutex);
+	}
 }
 
-int main(void)
+void producer()
 {
-	InitializeCriticalSection(&cs);
+	cout << "[PRODUCER] thread started" << endl;
 
-	thread thWrite(thread_write);
-	thread thRead(thread_read);
+	while (1)
+	{
+		Sleep(writeDelay);
 
-	thWrite.join();
-	thRead.join();
+		WaitForSingleObject(hSemWrite, INFINITE);
+		WaitForSingleObject(hMutex, INFINITE);
 
-    return 0;
+		buf += 1;
+		cout << "[PRODUCER] buf = " << buf << endl;
+
+		ReleaseMutex(hMutex);
+		ReleaseSemaphore(hSemRead, 1, NULL);
+		ReleaseSemaphore(hSemWrite, -1, NULL);
+	}
+}
+
+int main(int argc, char *argv[])
+{
+	hSemWrite = CreateSemaphore(NULL, 10, 10, NULL);
+	hSemRead = CreateSemaphore(NULL, 0, 10, NULL);
+	hMutex = CreateMutex(NULL, FALSE, NULL);
+
+	thread thProducer(producer);
+	thread thConsumer(consumer);
+
+	thProducer.join();
+	thConsumer.join();
+
+	return 0;
 }

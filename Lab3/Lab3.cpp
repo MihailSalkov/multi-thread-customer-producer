@@ -2,66 +2,137 @@
 
 #include <iostream>
 #include <thread>
-
-#include <Windows.h>
+#include <mutex>
+#include <chrono>
 
 using namespace std;
 
-const int writeDelay = 310,
-	readDelay = 400;
+const int maxSize = 10;
 
-int buf = 0;
+int writeDelay = 100,
+	readDelay = 2011;
 
-HANDLE hSemWrite,
-	hSemRead,
-	hMutex;
+template<class T>
+class QueueItem {
+public:
+	T value;
+
+	QueueItem *next;
+
+	QueueItem(T value) {
+		this->value = value;
+		this->next = nullptr;
+	}
+};
+
+template<class T>
+class Queue {
+public:
+	QueueItem<T> *first, *last;
+
+	int count;
+
+	void push(T i) {
+		QueueItem<T> *t = new QueueItem<T>(i);
+
+		if (count++ == 0) {
+			first = last = t;
+		}
+		else {
+			last->next = t;
+			last = t;
+		}
+	}
+
+	T pop() {
+		T res = first->value;
+
+		first = first->next;
+
+		count--;
+
+		return res;
+	}
+};
+
+Queue<int> q;
+mutex m;
+condition_variable cv;
 
 void consumer()
 {
-	cout << "[CONSUMER] thread started" << endl;
+	int i;
 
 	while (1)
 	{
-		Sleep(readDelay);
+		this_thread::sleep_for(chrono::milliseconds(readDelay));
 
-		WaitForSingleObject(hSemRead, INFINITE);
-		WaitForSingleObject(hMutex, INFINITE);
+		{
+			unique_lock<mutex> l(m, defer_lock);
 
-		buf -= 1;
-		cout << "[CONSUMER] buf = " << buf << endl;
+			if (q.count < 1)
+			{
+				l.lock();
+				while (q.count < 1)
+					cv.wait(l);
+			}
 
-		ReleaseSemaphore(hSemWrite, 1, NULL);
-		ReleaseSemaphore(hSemRead, -1, NULL);
-		ReleaseMutex(hMutex);
+			i = q.pop();
+
+			cv.notify_one();
+		}
+
+		cout << "[CONSUMER] " << i << endl;
+
+		QueueItem<int>* t = q.first;
+		cout << "{ ";
+		while (t != nullptr) {
+			cout << t->value << " ";
+			t = t->next;
+		}
+		cout << "}" << endl;
 	}
 }
 
 void producer()
 {
-	cout << "[PRODUCER] thread started" << endl;
+	int i;
 
 	while (1)
 	{
-		Sleep(writeDelay);
+		this_thread::sleep_for(chrono::milliseconds(writeDelay));
 
-		WaitForSingleObject(hSemWrite, INFINITE);
-		WaitForSingleObject(hMutex, INFINITE);
+		i = rand() % 10;
 
-		buf += 1;
-		cout << "[PRODUCER] buf = " << buf << endl;
+		{
+			unique_lock<mutex> l(m, defer_lock);
 
-		ReleaseMutex(hMutex);
-		ReleaseSemaphore(hSemRead, 1, NULL);
-		ReleaseSemaphore(hSemWrite, -1, NULL);
+			if (q.count >= maxSize)
+			{
+				l.lock();
+				while (q.count >= maxSize)
+					cv.wait(l);
+			}
+
+			q.push(i);
+
+			cv.notify_one();
+		}
+
+		cout << "[PRODUCER] " << i << endl;
+
+		QueueItem<int>* t = q.first;
+		cout << "{ ";
+		while (t != nullptr) {
+			cout << t->value << " ";
+			t = t->next;
+		}
+		cout << "}" << endl;
 	}
 }
 
 int main(int argc, char *argv[])
 {
-	hSemWrite = CreateSemaphore(NULL, 10, 10, NULL);
-	hSemRead = CreateSemaphore(NULL, 0, 10, NULL);
-	hMutex = CreateMutex(NULL, FALSE, NULL);
-
 	thread thProducer(producer);
 	thread thConsumer(consumer);
 
